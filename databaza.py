@@ -199,9 +199,8 @@ class Database:
 
     def find_middle_point(self):
         """
-        Find the average center of all stored LiDAR points
-        uses original_x, original_y, and original_z values.
-        point cloud scale needs to be applied to output and outputs XYZ
+        Find the center of points
+        point cloud scale needs to be applied to output and outputs XYZ --- doesn't apply anymore
         """
         pipeline = [
             {
