@@ -291,14 +291,14 @@ def convert_to_lat_lon(x,y):
     lon, lat = transformer.transform(x, y)
     return lon, lat
 
-def convert_to_meters(x,y):
+def convert_to_meters(lon, lat):
     transformer = pyproj.Transformer.from_crs(
         "EPSG:4326",  # WGS84 (lat/lon)
         "EPSG:32634",  # WGS84 / UTM Zone 34N
         always_xy=True
     )
-    lon, lat = transformer.transform(x, y)
-    return lon, lat
+    x, y = transformer.transform(lon, lat)
+    return x, y
 
 
 def save_pc_to_db(pc, db):
