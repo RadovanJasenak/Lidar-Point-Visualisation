@@ -228,10 +228,9 @@ class Database:
 
     def find_min_max(self):
         """
-        Find the minimum and maximum values of original_x, original_y, and original_z in the database.
+        Find the minimum and maximum values of X Y Z
 
-        Returns:
-            A dictionary containing the min and max values for x, y, and z, or None if no points exist.
+        Returns dictionary with min and max values
         """
         pipeline = [
             {
