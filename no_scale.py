@@ -17,7 +17,7 @@ last_loaded_position = None
 center_of_pc = database.find_middle_point()
 
 result = database.find_near_points(center_of_pc[0], center_of_pc[1], 30)
-print(f"Found {len(result)} points")
+#print(f"Found {len(result)} points")
 
 
 #Vertex shader applies point transformations

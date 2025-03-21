@@ -7,11 +7,6 @@ import laspy
 import os
 import numpy as np
 
-# MongoDB Connection Settings
-MONGO_URI = "mongodb://localhost:27017/"
-DB_NAME = "geoDB2"
-COLLECTION_NAME = "lidar_points"
-
 class PointCloud:
     """
     Point Cloud class
@@ -330,7 +325,10 @@ if __name__ == "__main__":
 
     print(mid)
 
-    res = database.find_near_gps(17.360368637676316, 48.21594493483842, 40)
+    # res = database.find_near_gps(17.360368637676316, 48.21594493483842, 40)
+
+    # find points in 40m radius around middle point
+    res = database.find_near_points(mid[0], mid[1], 40)
     print(len(res))
 
     #example_query()
