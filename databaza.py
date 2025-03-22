@@ -305,6 +305,16 @@ def save_pc_to_db(pc, db):
             chunk_arr = pc.convert_chunk_to_array(chunk)
             db.insert_to_db(chunk_arr, file_name)
 
+def save_pc_to_db_path(path, db):
+    pc = PointCloud(path)
+    file_hash = get_file_hash(pc.file_path)
+    file_name = pc.file_path
+    if not db.file_exists(file_hash):
+        db.files_collection.insert_one({"file_hash": file_hash, "file_name": file_name})
+        for chunk in pc.read_points(50_000):
+            chunk_arr = pc.convert_chunk_to_array(chunk)
+            db.insert_to_db(chunk_arr, file_name)
+
 def example_query():
     print(f"Number of points in point cloud: {pc.point_count}")
     center = database.find_middle_point()
