@@ -4,9 +4,8 @@ from OpenGL.GL import *
 import numpy as np
 import pyrr
 import time
-from databaza import PointCloud
-from databaza import Database
-from databaza import save_pc_to_db
+from databaza import PointCloud, Database, save_pc_to_db
+
 
 pc = PointCloud("data/Velky_Biel_32634_WGS84-TM34_sample.laz")
 
@@ -14,10 +13,11 @@ database = Database()
 save_pc_to_db(pc, database)
 
 center_of_pc = database.find_middle_point()
+RADIUS = 40
+CHECK_DISTANCE = 30
 
-result = database.find_near_points(center_of_pc[0], center_of_pc[1], 30)
+result = database.find_near_points(center_of_pc[0], center_of_pc[1], RADIUS)
 #print(f"Found {len(result)} points")
-
 
 #Vertex shader applies point transformations
 vertex_shader_source = """
@@ -87,18 +87,26 @@ def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, del
         camera_pos += movement * right
     return camera_pos
 
-def check_distance(camera_pos, last_cam_pos, threshold = 1000):
+def check_distance(camera_pos, last_cam_pos, VBO, threshold=500):
     # check if camera has moved a certain distance from its last position
     # threshold is in meters
     distance = np.linalg.norm(camera_pos[:2] - last_cam_pos[:2])
     if distance > threshold:
-        print(f"camera moved {distance} meters from its last position, load more points")
-        load_points()
-        return camera_pos.copy()
-    return last_cam_pos
+        # print(f"camera moved {distance} meters from its last position, load more points")
+        length = load_new_points(camera_pos, VBO, radius=RADIUS)
+        return camera_pos.copy(), length
+    return last_cam_pos, None
 
-def load_points():
-    pass
+def load_new_points(camera_pos, VBO, radius):
+    # perfrom a database query for new points
+    # update VBO with new points
+    new_result = database.find_near_points(camera_pos[0], camera_pos[1], radius)
+    new_points = np.ascontiguousarray(new_result, dtype=np.float32)
+    glBindBuffer(GL_ARRAY_BUFFER, VBO)
+    glBufferData(GL_ARRAY_BUFFER, new_points.nbytes, new_points, GL_STATIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    return len(new_points)
+
 
 def main():
     # Initialize GLFW.
@@ -184,6 +192,7 @@ def main():
     last_frame_time = 0
 
     last_cam_pos = camera_pos.copy()
+    len_of_render_array = len(points)
 
     # Render loop.
     while not glfw.window_should_close(window):
@@ -228,7 +237,10 @@ def main():
             # If the right button is not pressed, update last mouse positions.
             last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
 
-        last_cam_pos = check_distance(camera_pos, last_cam_pos, 30)
+        last_cam_pos, new_len = check_distance(camera_pos, last_cam_pos, VBO, CHECK_DISTANCE)
+        if new_len is not None:
+            len_of_render_array = new_len
+
 
         # Update view matrix.
         view = pyrr.matrix44.create_look_at(
@@ -247,7 +259,7 @@ def main():
         glUniformMatrix4fv(projection_loc, 1, GL_FALSE, projection)
 
         glBindVertexArray(VAO)
-        glDrawArrays(GL_POINTS, 0, len(points))
+        glDrawArrays(GL_POINTS, 0, len_of_render_array)
         glBindVertexArray(0)
 
         glfw.swap_buffers(window)
