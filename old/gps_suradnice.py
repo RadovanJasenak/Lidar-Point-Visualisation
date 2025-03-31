@@ -8,7 +8,7 @@ from databaza import PointCloud
 from databaza import Database
 from databaza import save_pc_to_db
 
-pc = PointCloud("data/Velky_Biel_32634_WGS84-TM34_sample.laz")
+pc = PointCloud("../data/Velky_Biel_32634_WGS84-TM34_sample.laz")
 pc_scale = pc.scales
 pc_offset = pc.offsets
 

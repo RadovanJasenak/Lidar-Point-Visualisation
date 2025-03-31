@@ -9,7 +9,6 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import queue
-import laspy
 from databaza import Database, save_pc_to_db_path
 
 last_cam_pos = None
@@ -23,10 +22,9 @@ camera_up = None
 cpu_points = None
 
 picked_points = []  # store clicked points to save them later as output
-object_queue = queue.Queue()
 
 database = Database()
-RADIUS = 50
+RADIUS = 40
 CHECK_DISTANCE = 30
 
 # Ray line data
@@ -122,12 +120,26 @@ def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, del
         camera_pos += movement * right
     return camera_pos
 
-def load_new_points():
+def check_distance(camera_pos, last_cam_pos, VBO, threshold=500):
+    # check if camera has moved a certain distance from its last position
+    # threshold is in meters
+    distance = np.linalg.norm(camera_pos[:2] - last_cam_pos[:2])
+    if distance > threshold:
+        # print(f"camera moved {distance} meters from its last position, load more points")
+        new_points = load_new_points(camera_pos, VBO, radius=RADIUS)
+        return camera_pos.copy(), new_points
+    return last_cam_pos, None
+
+def load_new_points(camera_pos, VBO, radius):
     # perform a database query for new points
-    new_result = database.find_near_points(file_name, camera_pos[0], camera_pos[1], RADIUS)
+    # update VBO with new points
+    new_result = database.find_near_points(file_name, camera_pos[0], camera_pos[1], radius)
     new_points = np.ascontiguousarray(new_result, dtype=np.float32)
     cpu_points = np.ascontiguousarray(new_result, dtype=np.float64)
-    object_queue.put((new_points, cpu_points))
+    glBindBuffer(GL_ARRAY_BUFFER, VBO)
+    glBufferData(GL_ARRAY_BUFFER, new_points.nbytes, new_points, GL_STATIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    return new_points
 
 def compute_picking_ray(mouse_x, mouse_y, view, projection):
     # gluUnProject to get ray in double precision
@@ -163,31 +175,6 @@ def pick_point_along_ray(ray_origin, ray_dir, points_cpu, threshold=2.0):
         return points_xyz[min_idx]
     return None
 
-def save_selected_points(default_color=(255, 0, 0)):
-    header = laspy.LasHeader(point_format=2, version="1.2")
-    header.scale = [0.01, 0.01, 0.01]
-    header.offset = [0.0, 0.0, 0.0]
-
-    points = np.array(picked_points, dtype=np.float64)
-    x = points[:, 0]
-    y = points[:, 1]
-    z = points[:, 2]
-    n_points = points.shape[0]
-    r = np.full(n_points, default_color[0], dtype=np.uint16)
-    g = np.full(n_points, default_color[1], dtype=np.uint16)
-    b = np.full(n_points, default_color[2], dtype=np.uint16)
-
-    las = laspy.LasData(header)
-    las.x = x
-    las.y = y
-    las.z = z
-    las.red   = r
-    las.green = g
-    las.blue  = b
-
-    las.update_header()
-    las.write("selected_points.las")
-
 def mouse_button_callback(window, button, action, mods):
     global camera_pos, camera_front, camera_up
     global latest_view, latest_projection, latest_points
@@ -218,10 +205,6 @@ def mouse_button_callback(window, button, action, mods):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
         ray_line_active = True
 
-def key_callback(window, key, scancode, action, mods):
-    if key == glfw.KEY_ENTER and action == glfw.PRESS:
-        save_selected_points()
-
 def main(File_name):
     # Initialize GLFW
     global camera_pos, camera_front, camera_up
@@ -230,6 +213,7 @@ def main(File_name):
     global cpu_points, file_name
     global dpi_scale_x, dpi_scale_y
     file_name = File_name
+    object_queue = queue.Queue()
 
     center_of_pc = database.find_middle_point(file_name)
     result = database.find_near_points(file_name, center_of_pc[0], center_of_pc[1], RADIUS)
@@ -265,7 +249,6 @@ def main(File_name):
     glfw.swap_interval(1)  # Enable vsync
 
     glfw.set_mouse_button_callback(window, mouse_button_callback)
-    glfw.set_key_callback(window, key_callback)
 
     pointcloud_program = create_shader_program(vertex_shader_source, fragment_shader_source)
     line_shader_program = create_shader_program(line_vertex_shader_source, line_fragment_shader_source)
@@ -347,8 +330,6 @@ def main(File_name):
     latest_points = points
     latest_projection = projection
 
-    background_thread = None
-
     # render loop
     while not glfw.window_should_close(window):
         glfw.poll_events()
@@ -387,24 +368,10 @@ def main(File_name):
         else:
             last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
 
-        distance = np.linalg.norm(camera_pos[:2] - last_cam_pos[:2])
-        if distance > CHECK_DISTANCE:
-            if background_thread is None or not background_thread.is_alive():
-                last_cam_pos = camera_pos.copy()
-                background_thread = threading.Thread(target=load_new_points, daemon=True)
-                background_thread.start()
-                #print("thread started")
-
-        try:
-            new_pts, cpu_pts = object_queue.get_nowait()
-            #new_pts, cpu_pts = object_queue.get(timeout=0.01)
-            points = latest_points = new_pts
-            cpu_points = cpu_pts
-            glBindBuffer(GL_ARRAY_BUFFER, VBO)
-            glBufferData(GL_ARRAY_BUFFER, points.nbytes, points, GL_STATIC_DRAW)
-            glBindBuffer(GL_ARRAY_BUFFER, 0)
-        except queue.Empty:
-            pass
+        last_cam_pos, new_points = check_distance(camera_pos, last_cam_pos, VBO, CHECK_DISTANCE)
+        if new_points is not None:
+            points = new_points
+            latest_points = new_points
 
         view = pyrr.matrix44.create_look_at(
             eye=camera_pos,
@@ -473,7 +440,7 @@ def main(File_name):
         elapsed = current_time - last_time
         if elapsed >= 1.0:
             fps = frame_count / elapsed
-            print(f"FPS: {fps:.2f}")
+            # print(f"FPS: {fps:.2f}")
             frame_count = 0
             last_time = current_time
 

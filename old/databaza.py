@@ -97,21 +97,22 @@ class PointCloud:
             points_array = np.hstack((points_array, grayscale))
         return points_array
 
-
 class Database:
     def __init__(self, mongodb_uri="mongodb://localhost:27017/",
-                 db_name="testDB"):
+                 db_name="geoDB2",
+                 collection_name="lidar_points"):
         self.client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
         self.db = self.client[db_name]
+        self.points_collection = self.db[collection_name]
         self.files_collection = self.db["files"]
+
+        # Create geospatial index
+        self.points_collection.create_index([("location", GEOSPHERE)])
 
     def close(self):
         self.client.close()
 
-    def insert_to_db(self, points_array, file_name, collection_name):
-        collection = self.db[collection_name]
-        # Create geospatial index
-        collection.create_index([("location", GEOSPHERE)])
+    def insert_to_db(self, points_array, file_name):
         points = []
         x, y, z = points_array[:, 0], points_array[:, 1], points_array[:, 2]
         r, g, b = points_array[:, 3], points_array[:, 4], points_array[:, 5]
@@ -122,9 +123,10 @@ class Database:
         for i in range(len(points_array)):
             lon, lat = convert_to_lat_lon(x[i], y[i])
             geohash = geohash2.encode(lat, lon, precision=5)  # Generate Geohash
+
             points.append({
-                "file_name": file_name,
-                "geohash": geohash,
+                "file_name": file_name,  # Store the file name
+                "geohash": geohash,  # Store geohash for spatial queries
                 "location": {"type": "Point", "coordinates": [lon, lat]},
                 "original_x": float(x[i]),
                 "original_y": float(y[i]),
@@ -133,51 +135,33 @@ class Database:
                 "g": float(g[i]),
                 "b": float(b[i])
             })
-        collection.insert_many(points)
+
+        self.points_collection.insert_many(points)
 
     def get_stored_files(self):
         return self.files_collection.distinct("file_name")
 
-    def remove_file(self, file_name):
-        """
-        Remove a file from files collection and drop its points collection.
-        """
-        doc = self.files_collection.find_one({"file_name": file_name})
-        if not doc:
-            raise Exception("File not found in database.")
-        collection_name = doc.get("collection_name")
-        self.db.drop_collection(collection_name)
-        self.files_collection.delete_one({"file_name": file_name})
-
-    def file_exists(self, file_hash):
-        """Check if a file with the given hash already exists in the database"""
-        return self.files_collection.find_one({"file_hash": file_hash})
-
-    def find_near_points(self, file_name, x, y, max_distance_meters):
-        """
-        Find LiDAR points within max_distance_meters of a point
-        """
-        doc = self.files_collection.find_one({"file_name": file_name})
-        if not doc:
-            raise Exception("File not found in database.")
-        collection = self.db[doc.get("collection_name")]
+    def find_near_points(self, x, y, max_distance_meters):
+        """Find LiDAR points within `max_distance_meters` of a (lon, lat) point"""
+        # input in meters
         lon, lat = convert_to_lat_lon(x, y)
         query = {
             "location": {
                 "$near": {
                     "$geometry": {
                         "type": "Point",
-                        "coordinates": [lon, lat]  # GeoJSON format: [lon, lat]
+                        "coordinates": [lon, lat]  # GeoJSON uses [longitude, latitude]
                     },
                     "$maxDistance": max_distance_meters
                 }
             }
         }
-        results = list(collection.find(query))
+        results = list(self.points_collection.find(query))
+
         return np.array([
-            [point["original_x"],
-             point["original_y"],
-             point["original_z"],
+            [point["original_x"],  # (X)
+             point["original_y"],  # (Y)
+             point["original_z"],  # Z
              point["r"],
              point["g"],
              point["b"]]
@@ -208,14 +192,11 @@ class Database:
         ], dtype=np.float64)
         return ret_array
 
-    def find_middle_point(self, file_name):
+    def find_middle_point(self):
         """
-        Find the center of the point cloud
+        Find the center of points
+        point cloud scale needs to be applied to output and outputs XYZ --- doesn't apply anymore
         """
-        doc = self.files_collection.find_one({"file_name": file_name})
-        if not doc:
-            raise Exception("File not found in database.")
-        collection = self.db[doc.get("collection_name")]
         pipeline = [
             {
                 "$group": {
@@ -234,7 +215,7 @@ class Database:
                 }
             }
         ]
-        result = list(collection.aggregate(pipeline))
+        result = list(self.points_collection.aggregate(pipeline))
         if result:
             return [result[0]['x'], result[0]['y'], result[0]['z']]
         else:
@@ -243,6 +224,7 @@ class Database:
     def find_min_max(self):
         """
         Find the minimum and maximum values of X Y Z
+
         Returns dictionary with min and max values
         """
         pipeline = [
@@ -268,28 +250,37 @@ class Database:
         else:
             return None
 
-def visualize(x_coords, y_coords, colours, center):
+    def file_exists(self, file_hash):
+        """Check if a file with the given hash already exists in the database."""
+        return self.files_collection.find_one({"file_hash": file_hash})
+
+
+def visualize(x_coords, y_coords, colours):
+    center = database.find_middle_point()
     plt.figure(figsize=(8, 7))
     plt.scatter(x_coords, y_coords, c=colours, s=1, marker='o')
-    plt.scatter(center[0], center[1], color='red', s=20)
+    plt.scatter(229655.09375, 5346709, color='red', s=20)
+    # plt.scatter(center[0], center[1], color='red', s=20)
     plt.title("Search Visualization")
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.show()
 
-# Function to get the hash of a file
+
+# Function to get the hash of the .laz file
 def get_file_hash(file_path):
     """Generate a hash for the .laz file to track it uniquely"""
     sha256_hash = hashlib.sha256()
     with open(file_path, "rb") as f:
+        # Read and update hash string value in blocks of 4K
         for byte_block in iter(lambda: f.read(4096), b""):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
-def convert_to_lat_lon(x, y):
+def convert_to_lat_lon(x,y):
     transformer = pyproj.Transformer.from_crs(
-        "EPSG:32634",  # UTM Zone 34N
-        "EPSG:4326",   # WGS84 (lat/lon)
+        "EPSG:32634",  # WGS84 / UTM Zone 34N
+        "EPSG:4326",  # WGS84 (lat/lon)
         always_xy=True
     )
     lon, lat = transformer.transform(x, y)
@@ -297,51 +288,44 @@ def convert_to_lat_lon(x, y):
 
 def convert_to_meters(lon, lat):
     transformer = pyproj.Transformer.from_crs(
-        "EPSG:4326",   # WGS84 (lat/lon)
-        "EPSG:32634",  # UTM Zone 34N
+        "EPSG:4326",  # WGS84 (lat/lon)
+        "EPSG:32634",  # WGS84 / UTM Zone 34N
         always_xy=True
     )
     x, y = transformer.transform(lon, lat)
     return x, y
 
+
 def save_pc_to_db(pc, db):
     file_hash = get_file_hash(pc.file_path)
     file_name = pc.file_path
-    collection_name = "points_" + file_hash
     if not db.file_exists(file_hash):
-        db.files_collection.insert_one({
-            "file_hash": file_hash,
-            "file_name": file_name,
-            "collection_name": collection_name
-        })
+        db.files_collection.insert_one({"file_hash": file_hash, "file_name": file_name})
         for chunk in pc.read_points(50_000):
             chunk_arr = pc.convert_chunk_to_array(chunk)
-            db.insert_to_db(chunk_arr, file_name, collection_name)
+            db.insert_to_db(chunk_arr, file_name)
 
 def save_pc_to_db_path(path, db):
     pc = PointCloud(path)
     file_hash = get_file_hash(pc.file_path)
-    file_name = os.path.basename(path)
-    collection_name = "points_" + file_hash
+    file_name = pc.file_path
     if not db.file_exists(file_hash):
-        db.files_collection.insert_one({
-            "file_hash": file_hash,
-            "file_name": file_name,
-            "collection_name": collection_name
-        })
+        db.files_collection.insert_one({"file_hash": file_hash, "file_name": file_name})
         for chunk in pc.read_points(50_000):
             chunk_arr = pc.convert_chunk_to_array(chunk)
-            db.insert_to_db(chunk_arr, file_name, collection_name)
+            db.insert_to_db(chunk_arr, file_name)
 
-def example_query(file_name):
+def example_query():
     print(f"Number of points in point cloud: {pc.point_count}")
-    center = database.find_middle_point(file_name)
-    result = database.find_near_points(file_name, center[0], center[1], 30)
+    center = database.find_middle_point()
+    result = database.find_near_points(229655.09375, 5346709, 50)
+    # result = database.find_near_points(center[0], center[1], 30)
     print(f"Found {len(result)} points")
+
     x_coords = result[:, 0]
     y_coords = result[:, 1]
     colours = result[:, 3:]
-    visualize(x_coords, y_coords, colours, center)
+    visualize(x_coords, y_coords, colours)
 
 if __name__ == "__main__":
     pc = PointCloud("data/Velky_Biel_32634_WGS84-TM34_sample.laz")

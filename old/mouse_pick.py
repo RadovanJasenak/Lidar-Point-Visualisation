@@ -4,21 +4,28 @@ from OpenGL.GL import *
 import numpy as np
 import pyrr
 import time
-from databaza import PointCloud
-from databaza import Database
-from databaza import save_pc_to_db
+from databaza import PointCloud, Database, save_pc_to_db
 
-pc = PointCloud("data/Velky_Biel_32634_WGS84-TM34_sample.laz")
+#latest_camera_pos = None
+last_cam_pos = None
+latest_view = None
+latest_projection = None
+latest_points = None
+window_width = None
+window_height = None
+picked_points = []  # store clicked points to save them later as output
+
+pc = PointCloud("../data/Velky_Biel_32634_WGS84-TM34_sample.laz")
 
 database = Database()
 save_pc_to_db(pc, database)
-last_loaded_position = None
 
 center_of_pc = database.find_middle_point()
+RADIUS = 40
+CHECK_DISTANCE = 30
 
-result = database.find_near_points(center_of_pc[0], center_of_pc[1], 30)
+result = database.find_near_points(center_of_pc[0], center_of_pc[1], RADIUS)
 #print(f"Found {len(result)} points")
-
 
 #Vertex shader applies point transformations
 vertex_shader_source = """
@@ -88,13 +95,84 @@ def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, del
         camera_pos += movement * right
     return camera_pos
 
+def check_distance(camera_pos, last_cam_pos, VBO, threshold=500):
+    # check if camera has moved a certain distance from its last position
+    # threshold is in meters
+    distance = np.linalg.norm(camera_pos[:2] - last_cam_pos[:2])
+    if distance > threshold:
+        # print(f"camera moved {distance} meters from its last position, load more points")
+        new_points = load_new_points(camera_pos, VBO, radius=RADIUS)
+        return camera_pos.copy(), new_points
+    return last_cam_pos, None
+
+def load_new_points(camera_pos, VBO, radius):
+    # perfrom a database query for new points
+    # update VBO with new points
+    new_result = database.find_near_points(camera_pos[0], camera_pos[1], radius)
+    new_points = np.ascontiguousarray(new_result, dtype=np.float32)
+    glBindBuffer(GL_ARRAY_BUFFER, VBO)
+    glBufferData(GL_ARRAY_BUFFER, new_points.nbytes, new_points, GL_STATIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    return new_points
+
+def mouse_pick(mouse_x, mouse_y, window_width, window_height, camera_pos, view, projection, points, threshold=0.5):
+    # threshold = see if a point is within <threshold> distance of where I clicked
+    # @ operator is matrix multiplication between numpy matrices
+
+    # Convert clicked mouse position to NDC normalized device coordinates
+    x_ndc = (2.0 * mouse_x / window_width) - 1.0
+    y_ndc = 1.0 - (2.0 * mouse_y / window_height)
+    ray_clip = np.array([x_ndc, y_ndc, -1.0, 1.0])
+
+    # Unproject the projection matrix
+    inv_projection = np.linalg.inv(projection)
+    ray_eye = inv_projection @ ray_clip
+    ray_eye = np.array([ray_eye[0], ray_eye[1], -1.0, 0.0])
+
+    # Unproject to world space
+    inv_view = np.linalg.inv(view)
+    ray_world = inv_view @ ray_eye
+    ray_world = ray_world[:3]
+    ray_world = ray_world / np.linalg.norm(ray_world)
+
+    # Compute distances from the ray to each point
+    # exclude points which couldn't be clicked due to not being visible
+    points_xyz = points[:, :3]
+    diff = points_xyz - camera_pos
+    t = np.dot(diff, ray_world)
+    valid = t > 0  # only points in front of the camera
+    if not np.any(valid):
+        return None
+
+    proj_points = camera_pos + np.outer(t, ray_world)
+    dists = np.linalg.norm(points_xyz - proj_points, axis=1)
+    dists[~valid] = np.inf
+    min_idx = np.argmin(dists)
+    if dists[min_idx] < threshold:
+        return points_xyz[min_idx]
+    return None
+
+def mouse_button_callback(window, button, action, mods):
+    global last_camera_pos, latest_view, latest_projection, latest_points, window_width, window_height, picked_points
+    if button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS:
+        mouse_x, mouse_y = glfw.get_cursor_pos(window)
+        picked = mouse_pick(mouse_x, mouse_y, window_width, window_height,
+                            last_cam_pos, latest_view, latest_projection, latest_points, threshold=0.5)
+        if picked is not None:
+            print("Picked point:", picked)
+            picked_points.append(picked)
+
+
 def main():
-    # Initialize GLFW.
+    # Initialize GLFW
+    global last_cam_pos, latest_view, latest_projection, latest_points, window_width, window_height
     if not glfw.init():
         raise Exception("GLFW could not be initialized!")
     monitor = glfw.get_primary_monitor()
     workarea = glfw.get_monitor_workarea(monitor)  # returns (x, y, width, height)
     x, y, work_width, work_height = workarea
+    window_width = work_width
+    window_height = work_height
 
     glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MAJOR, 3)
     glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MINOR, 3)
@@ -111,6 +189,8 @@ def main():
 
     glfw.make_context_current(window)
     glfw.swap_interval(1)  # Enable vsync
+
+    glfw.set_mouse_button_callback(window, mouse_button_callback)
 
     shader_program = create_shader_program(vertex_shader_source, fragment_shader_source)
 
@@ -140,7 +220,7 @@ def main():
     )
 
     # Initialize camera
-    camera_pos = np.array(center_of_pc, dtype=np.float64)
+    camera_pos = np.array(center_of_pc + np.array((-10., 0., 10.), dtype=np.float64), dtype=np.float64)
     # Initial yaw and pitch
     camera_yaw = 0.0
     camera_pitch = 0.0
@@ -171,7 +251,8 @@ def main():
     mouse_sensitivity = 0.1
     last_frame_time = 0
 
-    last_loaded_position = camera_pos.copy()
+    last_cam_pos = camera_pos.copy()
+    latest_points = points
 
     # Render loop.
     while not glfw.window_should_close(window):
@@ -216,6 +297,12 @@ def main():
             # If the right button is not pressed, update last mouse positions.
             last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
 
+        last_cam_pos, new_points = check_distance(camera_pos, last_cam_pos, VBO, CHECK_DISTANCE)
+        if new_points is not None:
+            points = new_points
+            latest_points = new_points
+
+
         # Update view matrix.
         view = pyrr.matrix44.create_look_at(
             eye=camera_pos,
@@ -223,6 +310,9 @@ def main():
             up=camera_up,
             dtype=np.float32
         )
+
+        latest_view = view  # update global
+        latest_projection = projection  # update global
 
         glClearColor(0.1, 0.1, 0.1, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)

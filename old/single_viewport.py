@@ -4,22 +4,23 @@ from OpenGL.GL import *
 import numpy as np
 import pyrr
 import time
-from databaza import PointCloud, Database, save_pc_to_db
+from databaza import PointCloud
+from databaza import Database
+from databaza import save_pc_to_db
 
-
-pc = PointCloud("data/Velky_Biel_32634_WGS84-TM34_sample.laz")
-
+pc = PointCloud("../data/Velky_Biel_32634_WGS84-TM34_sample.laz")
 database = Database()
 save_pc_to_db(pc, database)
 
+# result = database.find_near_points(229655.09375, 5346709, 50)
 center_of_pc = database.find_middle_point()
-RADIUS = 40
-CHECK_DISTANCE = 30
+result = database.find_near_points(center_of_pc[0], center_of_pc[1], 30)
+minmax = database.find_min_max()
+print(minmax['x'])
+print(f"Found {len(result)} points")
 
-result = database.find_near_points(center_of_pc[0], center_of_pc[1], RADIUS)
-#print(f"Found {len(result)} points")
 
-#Vertex shader applies point transformations
+# Vertex shader: accepts vertex positions and colors.
 vertex_shader_source = """
 #version 330 core
 layout(location = 0) in vec3 position;
@@ -35,15 +36,16 @@ void main() {
 }
 """
 
-# Fragment shader outputs vertex color.
+# Fragment shader: outputs the interpolated vertex color.
 fragment_shader_source = """
-#version 400 core
+#version 330 core
 in vec3 fragColor;
 out vec4 FragColor;
 void main() {
     FragColor = vec4(fragColor, 1.0);
 }
 """
+
 
 def compile_shader(source, shader_type):
     shader = glCreateShader(shader_type)
@@ -54,6 +56,7 @@ def compile_shader(source, shader_type):
         glDeleteShader(shader)
         raise RuntimeError(f"Shader compilation error: {error}")
     return shader
+
 
 def create_shader_program(vertex_source, fragment_source):
     vertex_shader = compile_shader(vertex_source, GL_VERTEX_SHADER)
@@ -70,8 +73,9 @@ def create_shader_program(vertex_source, fragment_source):
     glDeleteShader(fragment_shader)
     return program
 
+
 def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, delta_time=0.016):
-    # delta time (frame time) for smooth movement
+    # Multiply speed by delta_time for smoother, frame-independent movement.
     movement = speed * delta_time
     if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
         camera_pos += movement * camera_front
@@ -87,26 +91,6 @@ def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, del
         camera_pos += movement * right
     return camera_pos
 
-def check_distance(camera_pos, last_cam_pos, VBO, threshold=500):
-    # check if camera has moved a certain distance from its last position
-    # threshold is in meters
-    distance = np.linalg.norm(camera_pos[:2] - last_cam_pos[:2])
-    if distance > threshold:
-        # print(f"camera moved {distance} meters from its last position, load more points")
-        length = load_new_points(camera_pos, VBO, radius=RADIUS)
-        return camera_pos.copy(), length
-    return last_cam_pos, None
-
-def load_new_points(camera_pos, VBO, radius):
-    # perfrom a database query for new points
-    # update VBO with new points
-    new_result = database.find_near_points(camera_pos[0], camera_pos[1], radius)
-    new_points = np.ascontiguousarray(new_result, dtype=np.float32)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO)
-    glBufferData(GL_ARRAY_BUFFER, new_points.nbytes, new_points, GL_STATIC_DRAW)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-    return len(new_points)
-
 
 def main():
     # Initialize GLFW.
@@ -118,8 +102,14 @@ def main():
 
     glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MAJOR, 3)
     glfw.window_hint(GLFW_CONSTANTS.GLFW_CONTEXT_VERSION_MINOR, 3)
-    glfw.window_hint(GLFW_CONSTANTS.GLFW_OPENGL_FORWARD_COMPAT, GLFW_CONSTANTS.GLFW_TRUE)
-    glfw.window_hint(GLFW_CONSTANTS.GLFW_OPENGL_PROFILE, GLFW_CONSTANTS.GLFW_OPENGL_CORE_PROFILE)
+    glfw.window_hint(
+        GLFW_CONSTANTS.GLFW_OPENGL_FORWARD_COMPAT,
+        GLFW_CONSTANTS.GLFW_TRUE
+    )
+    glfw.window_hint(
+        GLFW_CONSTANTS.GLFW_OPENGL_PROFILE,
+        GLFW_CONSTANTS.GLFW_OPENGL_CORE_PROFILE
+    )
 
     window = glfw.create_window(
         work_width, work_height, "LiDAR Points Visualization", None, None
@@ -136,6 +126,17 @@ def main():
 
     # NumPy array with shape (N, 6) (x, y, z, r, g, b).
     points = np.ascontiguousarray(result, dtype=np.float32)
+    # Assuming points is an (N, 3) array for positions.
+    center = np.mean(points[:, :3], axis=0)
+    min_vals = np.min(points[:, :3], axis=0)
+    max_vals = np.max(points[:, :3], axis=0)
+    scale_factor = 1.0 / np.linalg.norm(max_vals - min_vals)  # Choose a factor that fits your scene.
+
+    # Apply transformation to center and scale the points:
+    transformed_positions = (points[:, :3] - center) * scale_factor
+    # Reassemble your points array (if you have colors, concatenate them back).
+    points[:, :3] = transformed_positions
+    middle = np.mean(points[:, :3], axis=0)
 
     # Create VAO and VBO.
     VAO = glGenVertexArrays(1)
@@ -156,12 +157,12 @@ def main():
     glBindVertexArray(0)
 
     projection = pyrr.matrix44.create_perspective_projection_matrix(
-        fovy=45.0, aspect=work_width / work_height, near=0.1, far=10000.0, dtype=np.float32
+        fovy=45.0, aspect=work_width / work_height, near=0.1, far=100.0, dtype=np.float32
     )
 
-    # Initialize camera
-    camera_pos = np.array(center_of_pc, dtype=np.float64)
-    # Initial yaw and pitch
+    # Initialize camera parameters.
+    camera_pos = np.array(middle + np.array([-0.2, 0.0, 0.0]), dtype=np.float32)
+    # Initial yaw and pitch are chosen so that the camera looks at the origin.
     camera_yaw = 0.0
     camera_pitch = 0.0
     # Compute initial camera_front from yaw and pitch.
@@ -180,7 +181,7 @@ def main():
     projection_loc = glGetUniformLocation(shader_program, "projection")
 
     glEnable(GL_DEPTH_TEST)
-    glPointSize(5.0)
+    glPointSize(6.0)
 
     # Variables for FPS calculation.
     last_time = time.time()
@@ -190,10 +191,6 @@ def main():
     last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
     mouse_sensitivity = 0.1
     last_frame_time = 0
-
-    last_cam_pos = camera_pos.copy()
-    len_of_render_array = len(points)
-
     # Render loop.
     while not glfw.window_should_close(window):
         glfw.poll_events()
@@ -203,7 +200,7 @@ def main():
         last_frame_time = current_time
 
         # --- Keyboard movement ---
-        camera_pos = process_keyboard(window, camera_pos, camera_front, camera_up, speed=100.0, delta_time=delta_time)
+        camera_pos = process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, delta_time=delta_time)
 
         # --- Mouse rotation ---
         # Only update camera rotation if the right mouse button is pressed.
@@ -237,11 +234,6 @@ def main():
             # If the right button is not pressed, update last mouse positions.
             last_mouse_x, last_mouse_y = glfw.get_cursor_pos(window)
 
-        last_cam_pos, new_len = check_distance(camera_pos, last_cam_pos, VBO, CHECK_DISTANCE)
-        if new_len is not None:
-            len_of_render_array = new_len
-
-
         # Update view matrix.
         view = pyrr.matrix44.create_look_at(
             eye=camera_pos,
@@ -259,7 +251,7 @@ def main():
         glUniformMatrix4fv(projection_loc, 1, GL_FALSE, projection)
 
         glBindVertexArray(VAO)
-        glDrawArrays(GL_POINTS, 0, len_of_render_array)
+        glDrawArrays(GL_POINTS, 0, len(points))
         glBindVertexArray(0)
 
         glfw.swap_buffers(window)
@@ -270,7 +262,7 @@ def main():
         elapsed = current_time - last_time
         if elapsed >= 1.0:
             fps = frame_count / elapsed
-            # print(f"FPS: {fps:.2f}")
+            print(f"FPS: {fps:.2f}")
             frame_count = 0
             last_time = current_time
 
