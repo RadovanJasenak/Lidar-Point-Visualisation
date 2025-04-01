@@ -35,6 +35,9 @@ ray_line_vao = None
 ray_line_vbo = None
 line_shader_program = None
 
+picked_line_vao = None
+picked_line_vbo = None
+
 #Vertex shader applies point transformations
 vertex_shader_source = """
 #version 330 core
@@ -218,14 +221,15 @@ def mouse_button_callback(window, button, action, mods):
         picked = pick_point_along_ray(ray_origin, ray_dir, cpu_points, threshold=0.5)
         if picked is not None:
             toggle_pick_point(picked, threshold=0.5)
-            # if toggle_pick_point(picked, threshold=1):
+            update_picked_line_data()
+            # if toggle_pick_point(picked, threshold=0.5):
             #     print("Picked point:", picked)
             # else:
             #     print("Unpicked point:", picked)
 
         far_distance = 500
         ray_end = ray_origin + ray_dir * far_distance
-        # Convert to float32 for GPU
+        # convert to float32 for GPU
         line_vertices = np.array([ray_origin, ray_end], dtype=np.float32).flatten()
         glBindBuffer(GL_ARRAY_BUFFER, ray_line_vbo)
         glBufferSubData(GL_ARRAY_BUFFER, 0, line_vertices.nbytes, line_vertices)
@@ -235,6 +239,41 @@ def mouse_button_callback(window, button, action, mods):
 def key_callback(window, key, scancode, action, mods):
     if key == glfw.KEY_ENTER and action == glfw.PRESS:
         save_selected_points()
+    if key == glfw.KEY_BACKSPACE and action == glfw.PRESS:
+        if picked_points:
+            picked_points.pop()
+            update_picked_line_data()
+
+def update_picked_line_data():
+    global picked_points, picked_line_vbo
+    if not picked_points:
+        return
+    line_data = []
+    for pt in picked_points:
+        line_data.extend([pt[0], pt[1], pt[2], 1.0, 0.0, 0.0])
+    line_data = np.array(line_data, dtype=np.float32)
+    glBindBuffer(GL_ARRAY_BUFFER, picked_line_vbo)
+    glBufferData(GL_ARRAY_BUFFER, line_data.nbytes, line_data, GL_DYNAMIC_DRAW)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+def init_picked_line_resources():
+    global picked_line_vao, picked_line_vbo
+    picked_line_vao = glGenVertexArrays(1)
+    picked_line_vbo = glGenBuffers(1)
+    glBindVertexArray(picked_line_vao)
+    glBindBuffer(GL_ARRAY_BUFFER, picked_line_vbo)
+    glBufferData(GL_ARRAY_BUFFER, 0, None, GL_DYNAMIC_DRAW)
+    # Attribute 0: position
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * 4, ctypes.c_void_p(0))
+    glEnableVertexAttribArray(0)
+    # Attribute 1: color
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * 4, ctypes.c_void_p(3 * 4))
+    glEnableVertexAttribArray(1)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
+    glBindVertexArray(0)
+
+def cursor_position_callback(window, xpos, ypos):
+    pass
 
 def main(File_name):
     # Initialize GLFW
@@ -280,6 +319,7 @@ def main(File_name):
 
     glfw.set_mouse_button_callback(window, mouse_button_callback)
     glfw.set_key_callback(window, key_callback)
+    glfw.set_cursor_pos_callback(window, cursor_position_callback)
 
     pointcloud_program = create_shader_program(vertex_shader_source, fragment_shader_source)
     line_shader_program = create_shader_program(line_vertex_shader_source, line_fragment_shader_source)
@@ -316,6 +356,8 @@ def main(File_name):
     glEnableVertexAttribArray(0)
     glBindBuffer(GL_ARRAY_BUFFER, 0)
     glBindVertexArray(0)
+
+    init_picked_line_resources()
 
     projection = pyrr.matrix44.create_perspective_projection_matrix(
         fovy=45.0, aspect=work_width / work_height, near=0.1, far=1000.0, dtype=np.float64
@@ -478,6 +520,15 @@ def main(File_name):
             # Clean up
             glDeleteBuffers(1, [highlight_VBO])
             glDeleteVertexArrays(1, [highlight_VAO])
+
+        if len(picked_points) >= 2:
+            glUseProgram(line_shader_program)
+            glUniformMatrix4fv(model_loc_line, 1, GL_FALSE, model)
+            glUniformMatrix4fv(view_loc_line, 1, GL_FALSE, view.astype(np.float32))
+            glUniformMatrix4fv(proj_loc_line, 1, GL_FALSE, projection.astype(np.float32))
+            glBindVertexArray(picked_line_vao)
+            glDrawArrays(GL_LINE_LOOP, 0, len(picked_points))
+            glBindVertexArray(0)
 
         glfw.swap_buffers(window)
 
