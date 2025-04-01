@@ -187,6 +187,17 @@ def save_selected_points(default_color=(255, 0, 0)):
 
     las.update_header()
     las.write("selected_points.las")
+    np.savetxt("points.txt", points, delimiter=", ", header="X Y Z", comments="")
+
+def toggle_pick_point(new_point, threshold=1e-3):
+    """check if picked point is already in picked_points array"""
+    global picked_points
+    for i, pt in enumerate(picked_points):
+        if np.linalg.norm(np.array(pt) - np.array(new_point)) < threshold:
+            picked_points.pop(i)
+            return False
+    picked_points.append(new_point)
+    return True
 
 def mouse_button_callback(window, button, action, mods):
     global camera_pos, camera_front, camera_up
@@ -206,8 +217,11 @@ def mouse_button_callback(window, button, action, mods):
         # use cpu-side points array of float64
         picked = pick_point_along_ray(ray_origin, ray_dir, cpu_points, threshold=0.5)
         if picked is not None:
-            print("Picked point:", picked)
-            picked_points.append(picked)
+            toggle_pick_point(picked, threshold=0.5)
+            # if toggle_pick_point(picked, threshold=1):
+            #     print("Picked point:", picked)
+            # else:
+            #     print("Unpicked point:", picked)
 
         far_distance = 500
         ray_end = ray_origin + ray_dir * far_distance
@@ -256,7 +270,7 @@ def main(File_name):
     fb_width, fb_height = glfw.get_framebuffer_size(window)
     dpi_scale_x = fb_width / win_width
     dpi_scale_y = fb_height / win_height
-    glViewport(0, 0, fb_width, fb_height)
+    #glViewport(0, 0, fb_width, fb_height)
     print(dpi_scale_x, dpi_scale_y)
     print(f"window size W: {win_width}, H: {win_height}")
     print(f"Framebuffer size W: {fb_width}, H: {fb_height}")
@@ -429,14 +443,14 @@ def main(File_name):
         glBindVertexArray(0)
 
         # draw ray line
-        if ray_line_active:
-            glUseProgram(line_shader_program)
-            glUniformMatrix4fv(model_loc_line, 1, GL_FALSE, model)
-            glUniformMatrix4fv(view_loc_line, 1, GL_FALSE, view.astype(np.float32))
-            glUniformMatrix4fv(proj_loc_line, 1, GL_FALSE, projection.astype(np.float32))
-            glBindVertexArray(ray_line_vao)
-            glDrawArrays(GL_LINES, 0, 2)
-            glBindVertexArray(0)
+        # if ray_line_active:
+        #     glUseProgram(line_shader_program)
+        #     glUniformMatrix4fv(model_loc_line, 1, GL_FALSE, model)
+        #     glUniformMatrix4fv(view_loc_line, 1, GL_FALSE, view.astype(np.float32))
+        #     glUniformMatrix4fv(proj_loc_line, 1, GL_FALSE, projection.astype(np.float32))
+        #     glBindVertexArray(ray_line_vao)
+        #     glDrawArrays(GL_LINES, 0, 2)
+        #     glBindVertexArray(0)
 
         # draw picked points
         if picked_points:
@@ -473,7 +487,7 @@ def main(File_name):
         elapsed = current_time - last_time
         if elapsed >= 1.0:
             fps = frame_count / elapsed
-            print(f"FPS: {fps:.2f}")
+            # print(f"FPS: {fps:.2f}")
             frame_count = 0
             last_time = current_time
 
