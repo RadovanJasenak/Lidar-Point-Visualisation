@@ -268,7 +268,7 @@ def key_callback(window, key, scancode, action, mods):
             picked_points.pop()
             update_picked_line_data()
     if key == glfw.KEY_R and action == glfw.PRESS:
-        camera_speed += min(200.0, camera_speed - 10.0)
+        camera_speed += 10
     if key == glfw.KEY_F and action == glfw.PRESS:
         camera_speed = max(10.0, camera_speed - 10.0)
 
