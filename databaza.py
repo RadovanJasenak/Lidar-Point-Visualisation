@@ -186,30 +186,6 @@ class Database:
             for point in results
         ], dtype=np.float32)
 
-    def find_near_gps(self, x, y, max_distance_meters):
-        """Find LiDAR points within `max_distance_meters` of a (lon, lat) point"""
-        #input in longtitude,latitude
-        lon, lat = x, y
-        query = {
-            "location": {
-                "$near": {
-                    "$geometry": {
-                        "type": "Point",
-                        "coordinates": [lon, lat]  # GeoJSON uses [longitude, latitude]
-                    },
-                    "$maxDistance": max_distance_meters
-                }
-            }
-        }
-        results = list(self.points_collection.find(query))
-
-        ret_array= np.array([
-            [point["location"]["coordinates"][0], point["location"]["coordinates"][1], point["original_z"],
-             point["r"], point["g"], point["b"]]
-            for point in results
-        ], dtype=np.float64)
-        return ret_array
-
     def find_middle_point(self, file_name):
         """
         Find the center of the point cloud
@@ -242,34 +218,6 @@ class Database:
         else:
             return None
 
-    def find_min_max(self):
-        """
-        Find the minimum and maximum values of X Y Z
-        Returns dictionary with min and max values
-        """
-        pipeline = [
-            {
-                "$group": {
-                    "_id": None,
-                    "minX": {"$min": "$original_x"},
-                    "maxX": {"$max": "$original_x"},
-                    "minY": {"$min": "$original_y"},
-                    "maxY": {"$max": "$original_y"},
-                    "minZ": {"$min": "$original_z"},
-                    "maxZ": {"$max": "$original_z"}
-                }
-            }
-        ]
-        result = list(self.points_collection.aggregate(pipeline))
-        if result:
-            return {
-                "x": {"min": result[0]["minX"], "max": result[0]["maxX"]},
-                "y": {"min": result[0]["minY"], "max": result[0]["maxY"]},
-                "z": {"min": result[0]["minZ"], "max": result[0]["maxZ"]}
-            }
-        else:
-            return None
-
 def visualize(x_coords, y_coords, colours, center):
     plt.figure(figsize=(8, 7))
     plt.scatter(x_coords, y_coords, c=colours, s=1, marker='o')
@@ -296,15 +244,6 @@ def convert_to_lat_lon(x, y):
     )
     lon, lat = transformer.transform(x, y)
     return lon, lat
-
-def convert_to_meters(lon, lat):
-    transformer = pyproj.Transformer.from_crs(
-        "EPSG:4326",   # WGS84 (lat/lon)
-        "EPSG:32634",  # UTM Zone 34N
-        always_xy=True
-    )
-    x, y = transformer.transform(lon, lat)
-    return x, y
 
 def save_pc_to_db(pc, db):
     file_hash = get_file_hash(pc.file_path)

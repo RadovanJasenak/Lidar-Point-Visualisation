@@ -28,8 +28,8 @@ picked_points = []  # store clicked points to save them later as output
 object_queue = queue.Queue()
 
 database = Database()
-RADIUS = 500
-CHECK_DISTANCE = 300
+RADIUS = 200
+CHECK_DISTANCE = 100
 
 # Ray line data
 ray_line_active = False
@@ -473,7 +473,7 @@ def main(File_name):
                 last_cam_pos = camera_pos.copy()
                 background_thread = threading.Thread(target=load_new_points, daemon=True)
                 background_thread.start()
-                #print("thread started")
+                print("Thread started")
 
         try:
             new_pts, cpu_pts = object_queue.get_nowait()
