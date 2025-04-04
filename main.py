@@ -1,3 +1,5 @@
+import os
+
 import glfw
 import glfw.GLFW as GLFW_CONSTANTS
 from OpenGL.GL import *
@@ -21,13 +23,14 @@ camera_pos = None
 camera_front = None
 camera_up = None
 cpu_points = None
+camera_speed = 100.0
 
 picked_points = []  # store clicked points to save them later as output
 object_queue = queue.Queue()
 
 database = Database()
-RADIUS = 50
-CHECK_DISTANCE = 30
+RADIUS = 500
+CHECK_DISTANCE = 300
 
 # Ray line data
 ray_line_active = False
@@ -111,18 +114,22 @@ def create_shader_program(vertex_source, fragment_source):
 def process_keyboard(window, camera_pos, camera_front, camera_up, speed=1.0, delta_time=0.016):
     # delta time (frame time) for smoother movement
     movement = speed * delta_time
-    if glfw.get_key(window, glfw.KEY_UP) == glfw.PRESS:
+    if glfw.get_key(window, glfw.KEY_W) == glfw.PRESS:
         camera_pos += movement * camera_front
-    if glfw.get_key(window, glfw.KEY_DOWN) == glfw.PRESS:
+    if glfw.get_key(window, glfw.KEY_S) == glfw.PRESS:
         camera_pos -= movement * camera_front
-    if glfw.get_key(window, glfw.KEY_LEFT) == glfw.PRESS:
+    if glfw.get_key(window, glfw.KEY_A) == glfw.PRESS:
         left = np.cross(camera_up, camera_front)
         left /= np.linalg.norm(left)
         camera_pos += movement * left
-    if glfw.get_key(window, glfw.KEY_RIGHT) == glfw.PRESS:
+    if glfw.get_key(window, glfw.KEY_D) == glfw.PRESS:
         right = np.cross(camera_front, camera_up)
         right /= np.linalg.norm(right)
         camera_pos += movement * right
+    if glfw.get_key(window, glfw.KEY_Q) == glfw.PRESS:
+        camera_pos += movement * camera_up
+    if glfw.get_key(window, glfw.KEY_E) == glfw.PRESS:
+        camera_pos -= movement * camera_up
     return camera_pos
 
 def load_new_points():
@@ -166,7 +173,9 @@ def pick_point_along_ray(ray_origin, ray_dir, points_cpu, threshold=2.0):
         return points_xyz[min_idx]
     return None
 
-def save_selected_points(default_color=(255, 0, 0)):
+def save_selected_points(default_color=(65530, 65530, 65530)):
+    output_folder = "Output"
+    os.makedirs(output_folder, exist_ok=True)
     header = laspy.LasHeader(point_format=2, version="1.2")
     header.scale = [0.01, 0.01, 0.01]
     header.offset = [0.0, 0.0, 0.0]
@@ -189,8 +198,23 @@ def save_selected_points(default_color=(255, 0, 0)):
     las.blue  = b
 
     las.update_header()
-    las.write("selected_points.las")
-    np.savetxt("points.txt", points, delimiter=", ", header="X Y Z", comments="")
+    las_file_path = os.path.join(output_folder, "selected_points.las")
+    las.write(las_file_path)
+
+    txt_file_path = os.path.join(output_folder, "selected_points.txt")
+    np.savetxt(txt_file_path, points, delimiter=", ", header="X Y Z", comments="")
+
+    obj_file_path = os.path.join(output_folder, "selected_points.obj")
+    with open(obj_file_path, "w") as f:
+        f.write("# OBJ file containing vertex data only\n")
+        for x, y, z in points:
+            f.write(f"v {x} {y} {z}\n")
+        f.write("p")
+        for i in range(1, len(points) + 1):
+            f.write(f" {i}")
+        f.write("\n")
+
+    print("Point selection saved")
 
 def toggle_pick_point(new_point, threshold=1e-3):
     """check if picked point is already in picked_points array"""
@@ -237,12 +261,17 @@ def mouse_button_callback(window, button, action, mods):
         ray_line_active = True
 
 def key_callback(window, key, scancode, action, mods):
+    global camera_speed
     if key == glfw.KEY_ENTER and action == glfw.PRESS:
         save_selected_points()
     if key == glfw.KEY_BACKSPACE and action == glfw.PRESS:
         if picked_points:
             picked_points.pop()
             update_picked_line_data()
+    if key == glfw.KEY_R and action == glfw.PRESS:
+        camera_speed += min(200.0, camera_speed - 10.0)
+    if key == glfw.KEY_F and action == glfw.PRESS:
+        camera_speed = max(10.0, camera_speed - 10.0)
 
 def update_picked_line_data():
     global picked_points, picked_line_vbo
@@ -272,16 +301,13 @@ def init_picked_line_resources():
     glBindBuffer(GL_ARRAY_BUFFER, 0)
     glBindVertexArray(0)
 
-def cursor_position_callback(window, xpos, ypos):
-    pass
-
 def main(File_name):
     # Initialize GLFW
     global camera_pos, camera_front, camera_up
     global latest_view, latest_projection, latest_points, last_cam_pos
     global ray_line_vao, ray_line_vbo, line_shader_program, ray_line_active
-    global cpu_points, file_name
-    global dpi_scale_x, dpi_scale_y
+    global cpu_points, file_name, dpi_scale_x, dpi_scale_y
+    global camera_speed
     file_name = File_name
 
     center_of_pc = database.find_middle_point(file_name)
@@ -319,7 +345,6 @@ def main(File_name):
 
     glfw.set_mouse_button_callback(window, mouse_button_callback)
     glfw.set_key_callback(window, key_callback)
-    glfw.set_cursor_pos_callback(window, cursor_position_callback)
 
     pointcloud_program = create_shader_program(vertex_shader_source, fragment_shader_source)
     line_shader_program = create_shader_program(line_vertex_shader_source, line_fragment_shader_source)
@@ -413,7 +438,7 @@ def main(File_name):
         last_frame_time = current_time
 
         # --- Keyboard movement ---
-        camera_pos = process_keyboard(window, camera_pos, camera_front, camera_up, speed=100.0, delta_time=delta_time)
+        camera_pos = process_keyboard(window, camera_pos, camera_front, camera_up, speed=camera_speed, delta_time=delta_time)
 
         # --- Mouse rotation ---
         if glfw.get_mouse_button(window, glfw.MOUSE_BUTTON_RIGHT) == glfw.PRESS:
