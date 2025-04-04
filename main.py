@@ -1,5 +1,4 @@
 import os
-
 import glfw
 import glfw.GLFW as GLFW_CONSTANTS
 from OpenGL.GL import *
@@ -336,7 +335,7 @@ def main(File_name):
     dpi_scale_x = fb_width / win_width
     dpi_scale_y = fb_height / win_height
     #glViewport(0, 0, fb_width, fb_height)
-    print(dpi_scale_x, dpi_scale_y)
+    print(f"X and Y dpi scales: {dpi_scale_x}, {dpi_scale_y}")
     print(f"window size W: {win_width}, H: {win_height}")
     print(f"Framebuffer size W: {fb_width}, H: {fb_height}")
 

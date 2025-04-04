@@ -6,6 +6,8 @@ import pyproj
 import laspy
 import os
 import numpy as np
+from tqdm import tqdm
+import math
 
 class PointCloud:
     """
@@ -329,7 +331,11 @@ def save_pc_to_db_path(path, db):
             "file_name": file_name,
             "collection_name": collection_name
         })
-        for chunk in pc.read_points(50_000):
+        total_points = pc.point_count
+        total_chunks = math.ceil(total_points / 50000)
+        progress = tqdm(pc.read_points(50_000), total=total_chunks, desc="Uploading point cloud to database")
+        # progress = tqdm(pc.read_points(50_000), desc="Saving chunks")
+        for chunk in progress:
             chunk_arr = pc.convert_chunk_to_array(chunk)
             db.insert_to_db(chunk_arr, file_name, collection_name)
 
