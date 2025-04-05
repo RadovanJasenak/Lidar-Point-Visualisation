@@ -260,7 +260,7 @@ def mouse_button_callback(window, button, action, mods):
         ray_line_active = True
 
 def key_callback(window, key, scancode, action, mods):
-    global camera_speed
+    global camera_speed, picked_points
     if key == glfw.KEY_ENTER and action == glfw.PRESS:
         save_selected_points()
     if key == glfw.KEY_BACKSPACE and action == glfw.PRESS:
@@ -271,6 +271,8 @@ def key_callback(window, key, scancode, action, mods):
         camera_speed += 10
     if key == glfw.KEY_F and action == glfw.PRESS:
         camera_speed = max(10.0, camera_speed - 10.0)
+    if key == glfw.KEY_C and action == glfw.PRESS:
+        picked_points = []
 
 def update_picked_line_data():
     global picked_points, picked_line_vbo
