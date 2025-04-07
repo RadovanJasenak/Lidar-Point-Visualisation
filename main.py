@@ -28,8 +28,8 @@ picked_points = []  # store clicked points to save them later as output
 object_queue = queue.Queue()
 
 database = Database()
-RADIUS = 200
-CHECK_DISTANCE = 100
+RADIUS = 190
+CHECK_DISTANCE = 150
 
 # Ray line data
 ray_line_active = False
@@ -173,6 +173,8 @@ def pick_point_along_ray(ray_origin, ray_dir, points_cpu, threshold=2.0):
     return None
 
 def save_selected_points(default_color=(65530, 65530, 65530)):
+    if len(picked_points) < 1:
+        return
     output_folder = "Output"
     os.makedirs(output_folder, exist_ok=True)
     header = laspy.LasHeader(point_format=2, version="1.2")
@@ -485,6 +487,7 @@ def main(File_name):
             glBindBuffer(GL_ARRAY_BUFFER, VBO)
             glBufferData(GL_ARRAY_BUFFER, points.nbytes, points, GL_STATIC_DRAW)
             glBindBuffer(GL_ARRAY_BUFFER, 0)
+            print("Thread finished")
         except queue.Empty:
             pass
 
