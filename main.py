@@ -207,13 +207,17 @@ def save_selected_points(default_color=(65530, 65530, 65530)):
 
     obj_file_path = os.path.join(output_folder, "selected_points.obj")
     with open(obj_file_path, "w") as f:
-        f.write("# OBJ file containing vertex data only\n")
+        f.write("# OBJ file containing vertex, point, and line data\n")
         for x, y, z in points:
             f.write(f"v {x} {y} {z}\n")
         f.write("p")
         for i in range(1, len(points) + 1):
             f.write(f" {i}")
         f.write("\n")
+        f.write("l")
+        for i in range(1, len(points) + 1):
+            f.write(f" {i}")
+        f.write(" 1\n")
 
     print("Point selection saved")
 
@@ -510,6 +514,8 @@ def main(File_name):
         glUniformMatrix4fv(view_loc_pc, 1, GL_FALSE, view.astype(np.float32))
         glUniformMatrix4fv(proj_loc_pc, 1, GL_FALSE, projection.astype(np.float32))
         glBindVertexArray(VAO)
+        if file_name == "selected_points.las":
+            glDrawArrays(GL_LINE_LOOP, 0, len(points))
         glDrawArrays(GL_POINTS, 0, len(points))
         glBindVertexArray(0)
 
