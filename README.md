@@ -1,7 +1,8 @@
 LiDAR Point Cloud Viewer  
 
-View and select/cut point cloud data, with support for coordinate system changes (WGS 84 / UTM zone 34N) using OpenGL.  
-
+View, select/cut and export point cloud data, with support for coordinate system changes (WGS 84 / UTM zone 34N) using OpenGL.  
+Requires local MongoDB installation.  
+  
 Controls  
 •	W – pohyb dopredu  
 •	A – pohyb vľavo  
