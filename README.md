@@ -1,3 +1,7 @@
+LiDAR Point Cloud Viewer  
+
+View and select/cut point cloud data, with support for coordinate system changes (WGS 84 / UTM zone 34N) using OpenGL.  
+
 Controls  
 •	W – pohyb dopredu  
 •	A – pohyb vľavo  
